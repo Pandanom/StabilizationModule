@@ -7,6 +7,8 @@
 #include "libs/I2Cdev.h"
 #include "libs/MPU6050_6Axis_MotionApps20.h"
 #include "Kalman.h"
+#include "GimbalMot.h"
+#include "libs/pidautotuner.h"
  
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
   #include "libs/Wire.h"
@@ -16,10 +18,17 @@ void dmpDataReady();
 
 
 #endif
+
+//uncomment to turn on data filter
+//#define TURN_ON_FILTER
+ 
  
 MPU6050 mpu;
- 
-Kalman kalmanX;
+#ifdef TURN_ON_FILTER
+Kalman kalmanX, kalmanY, kalmanZ;
+#endif
+GimbalMot gm;
+PID pid(-125,125);
 // MPU control/status vars
 bool dmpReady = false; // set true if DMP init was successful
 uint8_t mpuIntStatus; // holds actual interrupt status byte from MPU
@@ -33,15 +42,118 @@ Quaternion q; // [w, x, y, z] quaternion container
 VectorFloat gravity; // [x, y, z] gravity vector
 float ypr[3]; // [yaw, pitch, roll] yaw/pitch/roll container and gravity vector
  
+long tst = 0;
+ 
+ 
+ 
+ 
 volatile bool mpuInterrupt = false; // indicates whether MPU interrupt pin has gone high
 void dmpDataReady()
 {
   mpuInterrupt = true;
 }
+
+ 
+void updateData() 
+ {
+	// if programming failed, don't try to do anything
+	if (!dmpReady) return;
+	
+	// wait for MPU interrupt or extra packet(s) available
+	while (!mpuInterrupt && fifoCount < packetSize);
+	
+	// reset interrupt flag and get INT_STATUS byte
+	mpuInterrupt = false;
+	mpuIntStatus = mpu.getIntStatus();
+	
+	// get current FIFO count
+	fifoCount = mpu.getFIFOCount();
+	
+	// check for overflow (this should never happen unless our code is too inefficient)
+	if ((mpuIntStatus & 0x10) || fifoCount == 1024)
+	{
+		// reset so we can continue cleanly
+		mpu.resetFIFO();
+		Serial.println(F("FIFO overflow!"));
+		
+		// otherwise, check for DMP data ready interrupt (this should happen frequently)
+	}
+	else if (mpuIntStatus & 0x02)
+	{
+		// wait for correct available data length, should be a VERY short wait
+		while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
+		// read a packet from FIFO
+		mpu.getFIFOBytes(fifoBuffer, packetSize);
+		// track FIFO count here in case there is > 1 packet available
+		// (this lets us immediately read more without waiting for an interrupt)
+		fifoCount -= packetSize;
+		
+		mpu.dmpGetQuaternion(&q, fifoBuffer);
+		mpu.dmpGetGravity(&gravity, &q);
+		mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+		ypr[0] *= 180/M_PI;
+		ypr[1] *= 180/M_PI;
+		ypr[2] *= 180/M_PI;
+	}
+ }
+ 
+ #ifdef TURN_ON_FILTER
+ void filterData(){
+	 double dt = (double)(micros() - timer) / 1000000; // Calculate delta time
+	 timer = micros();
+	 ypr[0] = kalmanZ.getAngle(ypr[0], (double)mpu.getRotationZ() / 131.0, dt);
+	 ypr[1] = kalmanY.getAngle(ypr[1], (double)mpu.getRotationY() / 131.0, dt);
+	 ypr[2] = kalmanX.getAngle(ypr[2], (double)mpu.getRotationX() / 131.0, dt);
+ }
+ #endif
+ 
+  //tune PID controller
+  //outputs in serial kp, ki and kd  
+  void tunePID()
+  {
+	  Serial.println("tune start");
+	  PIDAutotuner tuner = PIDAutotuner();
+	  tuner.setTargetInputValue(0);
+	  tuner.setLoopInterval(50);
+	  tuner.setOutputRange(-125, 125);
+	  tuner.setZNMode(PIDAutotuner::ZNModeLessOvershoot);
+	  tuner.startTuningLoop(micros());
+	  long microseconds;
+	  while (!tuner.isFinished()) {
+		  updateData();
+		  // This loop must run at the same speed as the PID control loop being tuned
+		  long prevMicroseconds = microseconds;
+		  microseconds = micros();
+		  double input = ypr[2];
+		  double output = tuner.tunePID(input, microseconds);
+		  gm.setVelX(output);
+		  while (micros() - microseconds < 50) {
+			  delayMicroseconds(1);
+			  updateData();
+			  }
+		Serial.print(".");
+	  }
+	  Serial.println("");
+	  gm.setVelX(0);
+	   double kp = tuner.getKp();
+	   double ki = tuner.getKi();
+	   double kd = tuner.getKd();
+	    Serial.print("kp = ");
+		Serial.println(kp);
+		Serial.print("ki = ");
+		Serial.println(ki);
+		Serial.print("kd = ");
+		Serial.println(kd);
+  }
+  
+  
+ 
  
 void setup()
 {
-  
+    Serial.begin(115200);
+    Serial.flush();
+	 Serial.println("init start");
 // join I2C bus (I2Cdev library doesn't do this automatically)
 #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
   Wire.begin();
@@ -67,8 +179,8 @@ mpu.setZAccelOffset(1688); // 1688 factory default for my test chip
   {
     // turn on the DMP, now that it's ready
     mpu.setDMPEnabled(true);
-	mpu.setDLPFMode(0);
-	mpu.setDHPFMode(0);
+	//mpu.setDLPFMode(0);
+	//mpu.setDHPFMode(0);
 	//mpu.CalibrateGyro(10);
 	//mpu.CalibrateAccel(10);
     // enable Arduino interrupt detection
@@ -90,78 +202,58 @@ mpu.setZAccelOffset(1688); // 1688 factory default for my test chip
     Serial.print(devStatus);
     Serial.println(F(")"));
   }
-  Serial.begin(115200);
-  Serial.flush();
-   kalmanX.setAngle(0);
+
+  #ifdef TURN_ON_FILTER
+  kalmanX.setAngle(0);
+  kalmanY.setAngle(0);
+  kalmanZ.setAngle(0);
+  #endif
+  pid.setPos(0);
+  gm.init(3, 5, 6, 9, 10, 11);
+  Serial.println("init end");
+	
+  //uncomment if tuning needed 
+  //tunePID();
+  
+  tst = micros();
 }
  
  
 void loop()
 {
-  // if programming failed, don't try to do anything
-  if (!dmpReady) return;
- 
-  // wait for MPU interrupt or extra packet(s) available
-  while (!mpuInterrupt && fifoCount < packetSize);
- 
-  // reset interrupt flag and get INT_STATUS byte
-  mpuInterrupt = false;
-  mpuIntStatus = mpu.getIntStatus();
- 
-  // get current FIFO count
-  fifoCount = mpu.getFIFOCount();
- 
-  // check for overflow (this should never happen unless our code is too inefficient)
-  if ((mpuIntStatus & 0x10) || fifoCount == 1024)
-  {
-    // reset so we can continue cleanly
-    mpu.resetFIFO();
-    Serial.println(F("FIFO overflow!"));
- 
-  // otherwise, check for DMP data ready interrupt (this should happen frequently)
-  }
-  else if (mpuIntStatus & 0x02)
-  {
-    // wait for correct available data length, should be a VERY short wait
-    while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
-    // read a packet from FIFO
-    mpu.getFIFOBytes(fifoBuffer, packetSize);
-    // track FIFO count here in case there is > 1 packet available
-    // (this lets us immediately read more without waiting for an interrupt)
-    fifoCount -= packetSize;
- 
-    mpu.dmpGetQuaternion(&q, fifoBuffer);
-	/*
-    Serial.print("quat\t");
-    Serial.print(q.w);
-    Serial.print("\t");
-    Serial.print(q.x);
-    Serial.print("\t");
-    Serial.print(q.y);
-    Serial.print("\t");
-    Serial.println(q.z);
-	*/
 	
-    mpu.dmpGetGravity(&gravity, &q);
-    mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+	updateData();
+	#ifdef TURN_ON_FILTER
+	filterData();
+	#endif
+	  
 	
-    Serial.print(ypr[0] * 180/M_PI);
-    Serial.print(",");
-    Serial.print(ypr[1] * 180/M_PI);
-    Serial.print(",");
-    Serial.println(ypr[2] * 180/M_PI); // needed to regulate on model
+    Serial.println(ypr[2]); // needed to be regulated on model
 	
-	/*
-	ypr[2] *= 180/M_PI;
-	auto noise = ypr[2] + rand() % 100 - 49;
-	double dt = (double)(micros() - timer) / 1000000; // Calculate delta time
-	timer = micros();
-	auto ka = kalmanX.getAngle(noise, (double)mpu.getRotationX() / 131.0, dt);
-	Serial.print(noise);
-	Serial.print(",");
-	Serial.print(ypr[2]);
-	Serial.print(",");
-	Serial.println(ka);
-	*/
-  }
+	if(micros() - tst > 1000)
+	{			
+		tst = micros();
+		auto vel = pid.calcReg(ypr[2]);
+		gm.setVelX(vel);
+	}
+	//set kp, ki and kd from serial
+	if (Serial.available() > 0) {
+		auto k = Serial.readStringUntil('\n');
+		if(k[0] == 'p')
+		{
+			k.remove(0,1);
+			pid.setKp(k.toDouble());
+		}
+		else if(k[0] == 'i')
+		{
+			k.remove(0,1);
+			pid.setKi(k.toDouble());
+		}
+		else if(k[0] == 'd')
+		{
+			k.remove(0,1);
+			pid.setKd(k.toDouble());
+		}
+	}
+ 
 }

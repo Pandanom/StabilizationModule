@@ -29,7 +29,9 @@ PID(double min_, double max_);
 
 //set coefficients
 void setK(double kp_, double ki_, double kd_);
-
+void setKp(double kp_);
+void setKi(double ki_);
+void setKd(double kd_);
 //set needed position
 void setPos(double pos_);
 

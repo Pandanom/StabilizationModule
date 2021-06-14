@@ -39,7 +39,7 @@ Sketch.d Sketch.o: .././Sketch.cpp \
  ..\\..\ArduinoCore\include\core/Stream.h \
  .././libs/MPU6050_6Axis_MotionApps20.h .././libs/I2Cdev.h \
  .././libs/helper_3dmath.h .././libs/MPU6050.h .././Kalman.h \
- .././libs/Wire.h
+ .././GimbalMot.h .././libs/pidautotuner.h .././libs/Wire.h
 
 ..\\..\ArduinoCore\include\core/Arduino.h:
 
@@ -130,5 +130,9 @@ c:\program\ files\ (x86)\atmel\studio\7.0\toolchain\avr8\avr8-gnu-toolchain\avr\
 .././libs/MPU6050.h:
 
 .././Kalman.h:
+
+.././GimbalMot.h:
+
+.././libs/pidautotuner.h:
 
 .././libs/Wire.h:

@@ -12,9 +12,9 @@
 //double dT, preErr;
 
 PID::PID(double min_, double max_){
-	ki = 1;
-	kd = 1;
-	kp = 1;
+	kp = 4.5;
+	ki = 0.00000001;//0.005;
+	kd = 0.5;//0.0089;
 	min = min_;
 	max = max_;
 	preTime = millis();
@@ -26,18 +26,32 @@ void PID::setK(double kp_, double ki_, double kd_){
 		kp = kp_;
 }
 
+void PID::setKp(double kp_){
+	kp = kp_;
+}
+
+void PID::setKi(double ki_){
+	ki = ki_;
+}
+
+void PID::setKd(double kd_){
+	kd = kd_;
+}
+
 void PID::setPos(double pos_){
 	pos = pos_;
 }
 
 double PID::calcReg(double inp_){
 	//calculate time interval
-	auto currTime = millis();
-	double dT = (double)(preTime - currTime);
+	auto currTime = micros();
+	double dT = (double)(preTime - currTime) / 1000000;
 	preTime = currTime;
 	
 	//get error
 	double error = pos - inp_;
+
+	
 	
 	//calculate every part of PID
 	double pOut = kp * error;
@@ -55,7 +69,6 @@ double PID::calcReg(double inp_){
 		
 	//save this error for next iteration
 	preErr = error;
-	
 	return output;
 }
 

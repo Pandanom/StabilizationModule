@@ -28,8 +28,14 @@ GimbalMot::~GimbalMot()
 //initialize pins 
 void GimbalMot::init(int aX_, int bX_, int aY_, int bY_, int aZ_, int bZ_){
 	//turn up frequency to reduce noise
-	TCCR1B = (TCCR1B & 0xf8) | 1; // 31 371 Hz
-	TCCR2B = (TCCR2B & 0xf8) | 1; // 31 371 Hz
+	//TCCR1B = (TCCR1B & 0xf8) | 1; // 31 371 Hz
+	//TCCR2B = (TCCR2B & 0xf8) | 1; // 31 371 Hz
+	TCCR1B = 0;
+	TCCR2B = 0;
+	TCCR1B |= (1 << CS10);
+	TCCR1B |= (1 << CS12);
+	TCCR2B |= (1 << CS10);
+	TCCR2B |= (1 << CS12);
 	// set pin mode output for every pin
 	pinMode(aX_, OUTPUT);
 	pinMode(bX_, OUTPUT);
@@ -72,7 +78,7 @@ Motor::Motor(int outA_, int outB_){
 
 //set output
 void Motor::setO(int v_){
-	v_ = map(v_, INTMAX_MAX, INTMAX_MIN, 255, -255);
+	v_ = constrain(v_, -255, 255);
 	if( v_ < 0)
 	{
 		v = -v_;

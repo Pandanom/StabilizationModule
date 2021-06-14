@@ -10,6 +10,8 @@ libs\I2Cdev.cpp
 
 libs\MPU6050.cpp
 
+libs\pidautotuner.cpp
+
 PID.cpp
 
 Sketch.cpp
